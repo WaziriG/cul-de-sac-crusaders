@@ -379,25 +379,26 @@ class GameScene extends Phaser.Scene {
     // ─── HUD ───────────────────────────────────────────────────────────────────
 
     _buildHUD() {
+        // Debug overlay — press D to toggle (hidden by default for beta testers)
+        this._debugVisible = false;
         this._debugText = this.add.text(12, 12, '', {
             fontFamily: 'monospace',
             fontSize: '13px',
             color: '#ffffff',
             backgroundColor: '#00000099',
             padding: { x: 8, y: 6 },
-        }).setScrollFactor(0).setDepth(100);
+        }).setScrollFactor(0).setDepth(100).setVisible(false);
 
-        this.add.rectangle(640, 712, 1280, 24, 0x000000, 0.72)
-            .setScrollFactor(0).setDepth(99);
-        this.add.text(640, 712,
-            'Keyboard: ← → Move  |  SPACE Jump (hold = higher)  |  Double-tap = Sprint        Touch: ◀ ▶ ▲ buttons',
-            { fontFamily: 'monospace', fontSize: '12px', color: '#cccccc' }
-        ).setOrigin(0.5, 0.5).setScrollFactor(0).setDepth(100);
+        this.input.keyboard.on('keydown-D', () => {
+            this._debugVisible = !this._debugVisible;
+            this._debugText.setVisible(this._debugVisible);
+        });
     }
 
     // ─── Update loop ───────────────────────────────────────────────────────────
 
     update(time, delta) {
+        this._pollTouchButtons();
         this._move(time);
         this._jump(delta);
         this._updateHUD();
@@ -476,54 +477,93 @@ class GameScene extends Phaser.Scene {
     // ─── Touch Controls ────────────────────────────────────────────────────────
 
     _buildTouchControls() {
-        // Support up to 3 simultaneous touch points (move + jump)
-        this.input.addPointer(2);
+        this.input.addPointer(2); // 3 simultaneous touches total
 
-        const R = 50, Y = 636;
-
-        const makeBtn = (x, label, onDown, onUp) => {
-            // Circle background (Arc shape so alpha changes easily)
-            const bg = this.add.arc(x, Y, R, 0, 360, false, 0x000000, 0.35)
-                .setScrollFactor(0)
-                .setDepth(200)
-                .setStrokeStyle(2.5, 0xffffff, 0.5);
-
-            // Icon label
-            this.add.text(x, Y, label, {
-                fontFamily: 'Arial Black, Arial',
-                fontSize: '26px',
-                color: '#ffffff',
-            }).setOrigin(0.5, 0.5).setScrollFactor(0).setDepth(201).setAlpha(0.8);
-
-            // Invisible interactive hit zone (slightly larger than visual for fat fingers)
-            const zone = this.add.zone(x, Y, R * 2.2, R * 2.2)
-                .setScrollFactor(0)
-                .setDepth(202)
-                .setInteractive();
-
-            zone.on('pointerdown', () => { onDown(); bg.setFillStyle(0xffffff, 0.25); });
-            zone.on('pointerup',   () => { onUp();   bg.setFillStyle(0x000000, 0.35); });
-            zone.on('pointerout',  () => { onUp();   bg.setFillStyle(0x000000, 0.35); });
-
-            return zone;
+        // Button hit-circle definitions (x, y, radius) in game canvas space
+        this._btns = {
+            left:  { x: 75,   y: 630, r: 56 },
+            right: { x: 200,  y: 630, r: 56 },
+            jump:  { x: 1205, y: 630, r: 56 },
         };
 
-        // Left — bottom left
-        makeBtn(72,   Y, '◀',
-            () => this._touch.left = true,
-            () => this._touch.left = false
-        );
+        // Single graphics layer for all button visuals — redrawn each frame
+        this._touchGfx = this.add.graphics().setScrollFactor(0).setDepth(200);
 
-        // Right — next to left
-        makeBtn(186,  Y, '▶',
-            () => this._touch.right = true,
-            () => this._touch.right = false
-        );
+        // Draw initial unpressed state
+        this._drawTouchButtons();
+    }
 
-        // Jump — bottom right
-        makeBtn(1208, Y, '▲',
-            () => this._touch.jumpDown = true,
-            () => this._touch.jumpDown = false
-        );
+    // Called every frame — polls raw pointer positions instead of relying on events
+    _pollTouchButtons() {
+        const prev = { ...this._touch };
+        this._touch.left = false;
+        this._touch.right = false;
+        this._touch.jumpDown = false;
+
+        const ptrs = this.input.manager.pointers;
+        for (let i = 0; i < ptrs.length; i++) {
+            const p = ptrs[i];
+            if (!p || !p.isDown) continue;
+            if (this._inBtn(p.x, p.y, this._btns.left))  this._touch.left = true;
+            if (this._inBtn(p.x, p.y, this._btns.right)) this._touch.right = true;
+            if (this._inBtn(p.x, p.y, this._btns.jump))  this._touch.jumpDown = true;
+        }
+
+        // Only redraw when state changes
+        const changed = this._touch.left !== prev.left
+                     || this._touch.right !== prev.right
+                     || this._touch.jumpDown !== prev.jumpDown;
+        if (changed) this._drawTouchButtons();
+    }
+
+    _inBtn(px, py, btn) {
+        const dx = px - btn.x, dy = py - btn.y;
+        return dx * dx + dy * dy <= btn.r * btn.r;
+    }
+
+    _drawTouchButtons() {
+        const g = this._touchGfx;
+        g.clear();
+
+        const drawBtn = (btn, pressed) => {
+            // Background circle
+            g.fillStyle(0x000000, pressed ? 0.55 : 0.28);
+            g.fillCircle(btn.x, btn.y, btn.r);
+            g.lineStyle(2.5, 0xffffff, pressed ? 1.0 : 0.45);
+            g.strokeCircle(btn.x, btn.y, btn.r);
+        };
+
+        const drawArrow = (btn, dir, pressed) => {
+            const a = pressed ? 1.0 : 0.7;
+            const s = 18; // arrow half-size
+            g.fillStyle(0xffffff, a);
+            if (dir === 'left') {
+                g.fillTriangle(
+                    btn.x - s,     btn.y,
+                    btn.x + s * 0.6, btn.y - s,
+                    btn.x + s * 0.6, btn.y + s
+                );
+            } else if (dir === 'right') {
+                g.fillTriangle(
+                    btn.x + s,     btn.y,
+                    btn.x - s * 0.6, btn.y - s,
+                    btn.x - s * 0.6, btn.y + s
+                );
+            } else if (dir === 'up') {
+                g.fillTriangle(
+                    btn.x,         btn.y - s,
+                    btn.x - s,     btn.y + s * 0.6,
+                    btn.x + s,     btn.y + s * 0.6
+                );
+            }
+        };
+
+        drawBtn(this._btns.left,  this._touch.left);
+        drawBtn(this._btns.right, this._touch.right);
+        drawBtn(this._btns.jump,  this._touch.jumpDown);
+
+        drawArrow(this._btns.left,  'left',  this._touch.left);
+        drawArrow(this._btns.right, 'right', this._touch.right);
+        drawArrow(this._btns.jump,  'up',    this._touch.jumpDown);
     }
 }
