@@ -25,6 +25,7 @@ class GameScene extends Phaser.Scene {
         this._jumpHoldTime = 0;
         this._lastTap      = { left: 0, right: 0 };
         this._prevDown     = { left: false, right: false };
+        this._touch        = { left: false, right: false, jumpDown: false };
 
         this.physics.world.setBounds(0, 0, this.WORLD_W, this.WORLD_H);
 
@@ -33,6 +34,7 @@ class GameScene extends Phaser.Scene {
         this._buildPlayer();
         this._buildCamera();
         this._buildHUD();
+        this._buildTouchControls();
 
         this.cursors = this.input.keyboard.createCursorKeys();
     }
@@ -388,8 +390,8 @@ class GameScene extends Phaser.Scene {
         this.add.rectangle(640, 712, 1280, 24, 0x000000, 0.72)
             .setScrollFactor(0).setDepth(99);
         this.add.text(640, 712,
-            '← → Move   |   Double-tap direction: Sprint   |   SPACE: Jump  (hold = higher jump)',
-            { fontFamily: 'monospace', fontSize: '13px', color: '#cccccc' }
+            'Keyboard: ← → Move  |  SPACE Jump (hold = higher)  |  Double-tap = Sprint        Touch: ◀ ▶ ▲ buttons',
+            { fontFamily: 'monospace', fontSize: '12px', color: '#cccccc' }
         ).setOrigin(0.5, 0.5).setScrollFactor(0).setDepth(100);
     }
 
@@ -402,8 +404,8 @@ class GameScene extends Phaser.Scene {
     }
 
     _move(time) {
-        const lDown = this.cursors.left.isDown;
-        const rDown = this.cursors.right.isDown;
+        const lDown = this.cursors.left.isDown  || this._touch.left;
+        const rDown = this.cursors.right.isDown || this._touch.right;
 
         if (lDown && !this._prevDown.left) {
             if (time - this._lastTap.left < this.DOUBLE_TAP_MS) this._sprint = true;
@@ -432,7 +434,7 @@ class GameScene extends Phaser.Scene {
 
     _jump(delta) {
         const onGround  = this.player.body.blocked.down;
-        const spaceDown = this.cursors.space.isDown;
+        const spaceDown = this.cursors.space.isDown || this._touch.jumpDown;
 
         if (spaceDown && onGround && !this._jumpHeld) {
             this.player.setVelocityY(this.JUMP_VY);
@@ -468,6 +470,60 @@ class GameScene extends Phaser.Scene {
             `Phase 1 — Engine Bootstrap\n` +
             `Vel (${vx}, ${vy})  ${onGround ? 'Grounded' : 'Airborne'}  ${this._sprint ? 'SPRINT' : 'walk'}\n` +
             `Pos (${Math.round(this.player.x)}, ${Math.round(this.player.y)})`
+        );
+    }
+
+    // ─── Touch Controls ────────────────────────────────────────────────────────
+
+    _buildTouchControls() {
+        // Support up to 3 simultaneous touch points (move + jump)
+        this.input.addPointer(2);
+
+        const R = 50, Y = 636;
+
+        const makeBtn = (x, label, onDown, onUp) => {
+            // Circle background (Arc shape so alpha changes easily)
+            const bg = this.add.arc(x, Y, R, 0, 360, false, 0x000000, 0.35)
+                .setScrollFactor(0)
+                .setDepth(200)
+                .setStrokeStyle(2.5, 0xffffff, 0.5);
+
+            // Icon label
+            this.add.text(x, Y, label, {
+                fontFamily: 'Arial Black, Arial',
+                fontSize: '26px',
+                color: '#ffffff',
+            }).setOrigin(0.5, 0.5).setScrollFactor(0).setDepth(201).setAlpha(0.8);
+
+            // Invisible interactive hit zone (slightly larger than visual for fat fingers)
+            const zone = this.add.zone(x, Y, R * 2.2, R * 2.2)
+                .setScrollFactor(0)
+                .setDepth(202)
+                .setInteractive();
+
+            zone.on('pointerdown', () => { onDown(); bg.setFillStyle(0xffffff, 0.25); });
+            zone.on('pointerup',   () => { onUp();   bg.setFillStyle(0x000000, 0.35); });
+            zone.on('pointerout',  () => { onUp();   bg.setFillStyle(0x000000, 0.35); });
+
+            return zone;
+        };
+
+        // Left — bottom left
+        makeBtn(72,   Y, '◀',
+            () => this._touch.left = true,
+            () => this._touch.left = false
+        );
+
+        // Right — next to left
+        makeBtn(186,  Y, '▶',
+            () => this._touch.right = true,
+            () => this._touch.right = false
+        );
+
+        // Jump — bottom right
+        makeBtn(1208, Y, '▲',
+            () => this._touch.jumpDown = true,
+            () => this._touch.jumpDown = false
         );
     }
 }
