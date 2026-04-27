@@ -163,14 +163,11 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     }
 
     _applyCrouchPhysics() {
+        // Only update _baseScale — _applyVisualScale owns all setSize/setOffset calls
         if (this._crouching) {
-            this.body.setSize(320, 580);
-            this.body.setOffset(369, 430);
             this._baseScale.x = 0.19;
             this._baseScale.y = 0.19 * 0.6;
         } else {
-            this.body.setSize(320, 982);
-            this.body.setOffset(369, 28);
             this._baseScale.x = 0.19;
             this._baseScale.y = 0.19;
         }
@@ -305,13 +302,25 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         }
     }
 
-    // Applied every frame after all state updates — multiplies base scale by anim layer
+    // Applied every frame after all state updates — multiplies base scale by anim layer.
+    // Also compensates physics body dimensions so the absolute collision box never changes
+    // regardless of _animScale (Phaser multiplies setSize values by scaleX/Y internally).
     _applyVisualScale() {
-        this.setScale(
-            this._baseScale.x * this._animScale.x,
-            this._baseScale.y * this._animScale.y
-        );
-        // _animRotation is unsigned; sign determined by facing direction
+        const sx = this._baseScale.x * this._animScale.x;
+        const sy = this._baseScale.y * this._animScale.y;
+        this.setScale(sx, sy);
+
+        // Divide stored body dims by _animScale to cancel out the scale multiplication,
+        // keeping the absolute collision box identical to the un-animated state.
+        if (this._crouching) {
+            this.body.setSize(320 / this._animScale.x,   580 / this._animScale.y);
+            this.body.setOffset(369 / this._animScale.x, 430 / this._animScale.y);
+        } else {
+            this.body.setSize(320 / this._animScale.x,   982 / this._animScale.y);
+            this.body.setOffset(369 / this._animScale.x,  28 / this._animScale.y);
+        }
+
+        // _animRotation is unsigned magnitude; sign from facing direction
         const sign = this.flipX ? 1 : -1;
         this.setRotation(this._animRotation * sign);
     }
