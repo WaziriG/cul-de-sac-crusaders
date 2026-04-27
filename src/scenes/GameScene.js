@@ -18,6 +18,8 @@ class GameScene extends Phaser.Scene {
         this.JUMP_HOLD_ACCEL  = -680;
         this.MAX_JUMP_HOLD_MS = 270;
         this.DOUBLE_TAP_MS    = 250;
+        this.CROUCH_SPEED     = 80;
+        this.CRAWL_SPEED      = 110;
 
         // Runtime state
         this._sprint       = false;
@@ -25,7 +27,11 @@ class GameScene extends Phaser.Scene {
         this._jumpHoldTime = 0;
         this._lastTap      = { left: 0, right: 0 };
         this._prevDown     = { left: false, right: false };
-        this._touch        = { left: false, right: false, jumpDown: false };
+        this._touch        = { left: false, right: false, jumpDown: false, down: false };
+        this._crouching    = false;
+        this._crawling     = false;
+        this._lastDownTap  = 0;
+        this._prevDownDown = false;
 
         this.physics.world.setBounds(0, 0, this.WORLD_W, this.WORLD_H);
 
@@ -407,7 +413,21 @@ class GameScene extends Phaser.Scene {
     _move(time) {
         const lDown = this.cursors.left.isDown  || this._touch.left;
         const rDown = this.cursors.right.isDown || this._touch.right;
+        const dDown = this.cursors.down.isDown  || this._touch.down;
 
+        // Double-tap ↓ toggles crawl mode
+        if (dDown && !this._prevDownDown) {
+            if (time - this._lastDownTap < this.DOUBLE_TAP_MS) {
+                this._crawling = !this._crawling;
+            }
+            this._lastDownTap = time;
+        }
+        this._prevDownDown = dDown;
+
+        // Crouching = holding ↓ OR crawl toggled on
+        this._crouching = dDown || this._crawling;
+
+        // Sprint detection via double-tap ← or →
         if (lDown && !this._prevDown.left) {
             if (time - this._lastTap.left < this.DOUBLE_TAP_MS) this._sprint = true;
             this._lastTap.left = time;
@@ -416,10 +436,16 @@ class GameScene extends Phaser.Scene {
             if (time - this._lastTap.right < this.DOUBLE_TAP_MS) this._sprint = true;
             this._lastTap.right = time;
         }
-
         if (!lDown && !rDown) this._sprint = false;
+        if (this._crouching)  this._sprint = false;
 
-        const speed = this._sprint ? this.SPRINT_SPEED : this.WALK_SPEED;
+        // Speed selection
+        let speed;
+        if (this._crouching) {
+            speed = this._crawling ? this.CRAWL_SPEED : this.CROUCH_SPEED;
+        } else {
+            speed = this._sprint ? this.SPRINT_SPEED : this.WALK_SPEED;
+        }
 
         if (lDown) {
             this.player.setVelocityX(-speed);
@@ -431,13 +457,15 @@ class GameScene extends Phaser.Scene {
 
         this._prevDown.left  = lDown;
         this._prevDown.right = rDown;
+
+        this._applyCrouchPhysics();
     }
 
     _jump(delta) {
         const onGround  = this.player.body.blocked.down;
         const spaceDown = this.cursors.space.isDown || this._touch.jumpDown;
 
-        if (spaceDown && onGround && !this._jumpHeld) {
+        if (spaceDown && onGround && !this._jumpHeld && !this._crouching) {
             this.player.setVelocityY(this.JUMP_VY);
             this._jumpHeld     = true;
             this._jumpHoldTime = 0;
@@ -462,14 +490,29 @@ class GameScene extends Phaser.Scene {
         }
     }
 
+    _applyCrouchPhysics() {
+        const SCALE = 0.19;
+        if (this._crouching) {
+            // Shrink hitbox to upper half; offset keeps feet anchored to ground
+            this.player.body.setSize(320, 580);
+            this.player.body.setOffset(369, 430);
+            this.player.setScale(SCALE, SCALE * 0.6);
+        } else {
+            this.player.body.setSize(320, 982);
+            this.player.body.setOffset(369, 28);
+            this.player.setScale(SCALE, SCALE);
+        }
+    }
+
     _updateHUD() {
         const vx = Math.round(this.player.body.velocity.x);
         const vy = Math.round(this.player.body.velocity.y);
         const onGround = this.player.body.blocked.down;
+        const state = this._crawling ? 'CRAWL' : this._crouching ? 'CROUCH' : this._sprint ? 'SPRINT' : 'walk';
 
         this._debugText.setText(
             `Phase 1 — Engine Bootstrap\n` +
-            `Vel (${vx}, ${vy})  ${onGround ? 'Grounded' : 'Airborne'}  ${this._sprint ? 'SPRINT' : 'walk'}\n` +
+            `Vel (${vx}, ${vy})  ${onGround ? 'Grounded' : 'Airborne'}  ${state}\n` +
             `Pos (${Math.round(this.player.x)}, ${Math.round(this.player.y)})`
         );
     }
@@ -477,13 +520,15 @@ class GameScene extends Phaser.Scene {
     // ─── Touch Controls ────────────────────────────────────────────────────────
 
     _buildTouchControls() {
-        this.input.addPointer(2); // 3 simultaneous touches total
+        this.input.addPointer(3); // 4 simultaneous touches total
 
         // Button hit-circle definitions (x, y, radius) in game canvas space
+        // Positioned at ~75% canvas height so mobile browser chrome doesn't clip them
         this._btns = {
-            left:  { x: 75,   y: 630, r: 56 },
-            right: { x: 200,  y: 630, r: 56 },
-            jump:  { x: 1205, y: 630, r: 56 },
+            left:  { x: 85,   y: 510, r: 52 },
+            right: { x: 305,  y: 510, r: 52 },
+            down:  { x: 195,  y: 578, r: 52 },
+            jump:  { x: 1195, y: 510, r: 52 },
         };
 
         // Single graphics layer for all button visuals — redrawn each frame
@@ -499,6 +544,7 @@ class GameScene extends Phaser.Scene {
         this._touch.left = false;
         this._touch.right = false;
         this._touch.jumpDown = false;
+        this._touch.down = false;
 
         const ptrs = this.input.manager.pointers;
         for (let i = 0; i < ptrs.length; i++) {
@@ -507,12 +553,14 @@ class GameScene extends Phaser.Scene {
             if (this._inBtn(p.x, p.y, this._btns.left))  this._touch.left = true;
             if (this._inBtn(p.x, p.y, this._btns.right)) this._touch.right = true;
             if (this._inBtn(p.x, p.y, this._btns.jump))  this._touch.jumpDown = true;
+            if (this._inBtn(p.x, p.y, this._btns.down))  this._touch.down = true;
         }
 
         // Only redraw when state changes
         const changed = this._touch.left !== prev.left
                      || this._touch.right !== prev.right
-                     || this._touch.jumpDown !== prev.jumpDown;
+                     || this._touch.jumpDown !== prev.jumpDown
+                     || this._touch.down !== prev.down;
         if (changed) this._drawTouchButtons();
     }
 
@@ -555,15 +603,23 @@ class GameScene extends Phaser.Scene {
                     btn.x - s,     btn.y + s * 0.6,
                     btn.x + s,     btn.y + s * 0.6
                 );
+            } else if (dir === 'down') {
+                g.fillTriangle(
+                    btn.x,         btn.y + s,
+                    btn.x - s,     btn.y - s * 0.6,
+                    btn.x + s,     btn.y - s * 0.6
+                );
             }
         };
 
         drawBtn(this._btns.left,  this._touch.left);
         drawBtn(this._btns.right, this._touch.right);
+        drawBtn(this._btns.down,  this._touch.down);
         drawBtn(this._btns.jump,  this._touch.jumpDown);
 
         drawArrow(this._btns.left,  'left',  this._touch.left);
         drawArrow(this._btns.right, 'right', this._touch.right);
+        drawArrow(this._btns.down,  'down',  this._touch.down);
         drawArrow(this._btns.jump,  'up',    this._touch.jumpDown);
     }
 }
