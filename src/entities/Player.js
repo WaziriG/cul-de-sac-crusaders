@@ -35,6 +35,20 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this._wasOnGround   = true;
         this._landTimer     = 0;
 
+        // Combat state
+        this.hp   = 100;
+        this.maxHp = 100;
+        this.PUNCH_WINDUP_MS   = 70;
+        this.PUNCH_ACTIVE_MS   = 90;
+        this.PUNCH_RECOVER_MS  = 140;
+        this.PUNCH_DAMAGE      = 10;
+        this.PUNCH_KNOCKBACK_X = 280;
+        this.PUNCH_KNOCKBACK_Y = -160;
+        this.attackState    = 'none'; // none | windup | active | recover
+        this._attackTimer   = 0;
+        this._invulnUntil   = 0;
+        this._activeHitbox  = null;
+
         // Sprite & body setup
         this.setFlipX(true)
             .setCollideWorldBounds(true)
@@ -53,8 +67,9 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     update(time, delta, input) {
         this._move(time, input);
         this._jump(delta, input);
+        this._updateAttack(delta, input);
 
-        // Animation state machine
+        // Animation state machine — punch overrides ground movement but not air states
         const onGround    = this.body.blocked.down;
         const justLanded  = onGround && !this._wasOnGround;
         this._wasOnGround = onGround;
@@ -66,6 +81,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         else if (!onGround && this.body.velocity.y >= 0) newState = 'jump_fall';
         else if (justLanded)                             newState = 'land';
         else if (this._landTimer > 0)                    newState = 'land';
+        else if (this.attackState !== 'none')            newState = 'punch_' + this.attackState;
         else if (this._crawling)                         newState = 'crawl';
         else if (this._crouching)                        newState = 'crouch_idle';
         else if (Math.abs(this.body.velocity.x) < 5)    newState = 'idle';
@@ -162,6 +178,61 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         }
     }
 
+    // ─── Combat ────────────────────────────────────────────────────────────────
+
+    _updateAttack(delta, input) {
+        if (this.attackState === 'none') {
+            if (input.punch && this.body.blocked.down) {
+                this.attackState  = 'windup';
+                this._attackTimer = this.PUNCH_WINDUP_MS;
+            }
+            return;
+        }
+
+        this._attackTimer -= delta;
+
+        if (this.attackState === 'windup' && this._attackTimer <= 0) {
+            this.attackState  = 'active';
+            this._attackTimer = this.PUNCH_ACTIVE_MS;
+            this._activeHitbox = new Hitbox(this.scene, this, {
+                x:          55,
+                y:          -10,
+                width:      60,
+                height:     40,
+                tag:        'player_punch',
+                lifetimeMs: this.PUNCH_ACTIVE_MS,
+            });
+            this.scene._playerHitboxes.add(this._activeHitbox);
+
+        } else if (this.attackState === 'active' && this._attackTimer <= 0) {
+            this.attackState   = 'recover';
+            this._attackTimer  = this.PUNCH_RECOVER_MS;
+            this._activeHitbox = null;
+
+        } else if (this.attackState === 'recover' && this._attackTimer <= 0) {
+            this.attackState  = 'none';
+            this._attackTimer = 0;
+        }
+    }
+
+    takeDamage(amount, opts = {}) {
+        const now = this.scene.time.now;
+        if (now < this._invulnUntil) return false;
+
+        this._invulnUntil = now + 600;
+        this.hp = Math.max(0, this.hp - amount);
+
+        if (opts.knockbackX !== undefined) this.setVelocityX(opts.knockbackX);
+        if (opts.knockbackY !== undefined) this.setVelocityY(opts.knockbackY);
+
+        this.setTint(0xffffff);
+        this.scene.time.delayedCall(200, () => {
+            if (this.active) this.clearTint();
+        });
+
+        return true;
+    }
+
     _applyCrouchPhysics() {
         // Only update _baseScale — _applyVisualScale owns all setSize/setOffset calls
         if (this._crouching) {
@@ -182,9 +253,13 @@ class Player extends Phaser.Physics.Arcade.Sprite {
 
     _enterAnimState(state) {
         this._killAnimTweens();
-        this._animScale.x   = 1;
-        this._animScale.y   = 1;
-        this._animRotation  = 0;
+        // Punch sub-states animate from wherever the scale currently sits;
+        // all other states reset to neutral first.
+        if (!state.startsWith('punch_')) {
+            this._animScale.x  = 1;
+            this._animScale.y  = 1;
+        }
+        this._animRotation = 0;
 
         switch (state) {
 
@@ -297,6 +372,33 @@ class Player extends Phaser.Physics.Arcade.Sprite {
                     yoyo:     true,
                     repeat:   -1,
                     ease:     'Sine.easeInOut',
+                }));
+                break;
+
+            case 'punch_windup':
+                this._animScale.x = 0.85;
+                this._animScale.y = 1.1;
+                break;
+
+            case 'punch_active':
+                this._animScale.x = 1.18;
+                this._animScale.y = 0.88;
+                this._animTweens.push(this.scene.tweens.add({
+                    targets:  this._animScale,
+                    x:        1,
+                    y:        1,
+                    duration: this.PUNCH_ACTIVE_MS,
+                    ease:     'Back.easeOut',
+                }));
+                break;
+
+            case 'punch_recover':
+                this._animTweens.push(this.scene.tweens.add({
+                    targets:  this._animScale,
+                    x:        1,
+                    y:        1,
+                    duration: this.PUNCH_RECOVER_MS,
+                    ease:     'Sine.easeOut',
                 }));
                 break;
         }

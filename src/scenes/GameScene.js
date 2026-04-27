@@ -11,18 +11,22 @@ class GameScene extends Phaser.Scene {
         this.WORLD_W = 5120;
         this.WORLD_H = 720;
 
-        this._touch = { left: false, right: false, jumpDown: false, down: false };
+        this._touch = { left: false, right: false, jumpDown: false, down: false, punch: false, punchJustDown: false };
 
         this.physics.world.setBounds(0, 0, this.WORLD_W, this.WORLD_H);
 
+        this._generateRaccoonTexture();
         this._buildBackground();
         this._buildPlatforms();
         this._buildPlayer();
+        this.combatFX = new CombatFX(this);
+        this._buildEnemies();
         this._buildCamera();
         this._buildHUD();
         this._buildTouchControls();
 
-        this.cursors = this.input.keyboard.createCursorKeys();
+        this.cursors    = this.input.keyboard.createCursorKeys();
+        this._punchKey  = this.input.keyboard.addKey('J');
     }
 
     // ─── Background ────────────────────────────────────────────────────────────
@@ -335,11 +339,127 @@ class GameScene extends Phaser.Scene {
         addPlat(4680, 470, 200, 22);
     }
 
+    // ─── Raccoon texture ───────────────────────────────────────────────────────
+
+    _generateRaccoonTexture() {
+        const g = this.make.graphics({ x: 0, y: 0, add: false });
+
+        // Body
+        g.fillStyle(0x777777);
+        g.fillRoundedRect(10, 32, 60, 44, 12);
+
+        // Head
+        g.fillStyle(0x999999);
+        g.fillCircle(40, 26, 22);
+
+        // Ear base (grey)
+        g.fillStyle(0x999999);
+        g.fillTriangle(22, 10, 14, -3, 34, 6);
+        g.fillTriangle(58, 10, 66, -3, 46, 6);
+        // Ear inner (pink)
+        g.fillStyle(0xffbbbb);
+        g.fillTriangle(23, 9, 17, 1, 31, 6);
+        g.fillTriangle(57, 9, 63, 1, 49, 6);
+
+        // Eye mask patches
+        g.fillStyle(0x222222);
+        g.fillRoundedRect(18, 17, 16, 13, 4);
+        g.fillRoundedRect(46, 17, 16, 13, 4);
+
+        // Eyes (white + pupil)
+        g.fillStyle(0xffffff);
+        g.fillCircle(26, 23, 6);
+        g.fillCircle(54, 23, 6);
+        g.fillStyle(0x111111);
+        g.fillCircle(27, 23, 3);
+        g.fillCircle(55, 23, 3);
+
+        // Nose
+        g.fillStyle(0x333333);
+        g.fillCircle(40, 32, 4);
+        // Mouth
+        g.lineStyle(2, 0x333333, 1);
+        g.lineBetween(37, 35, 40, 38);
+        g.lineBetween(40, 38, 43, 35);
+
+        // Striped tail (right side)
+        g.fillStyle(0x888888);
+        g.fillEllipse(65, 58, 26, 16);
+        g.fillStyle(0x333333);
+        for (let i = 0; i < 3; i++) {
+            g.fillRect(57 + i * 5, 51, 3, 14);
+        }
+        g.lineStyle(1.5, 0x111111, 1);
+        g.strokeEllipse(65, 58, 26, 16);
+
+        // Feet
+        g.fillStyle(0x555555);
+        g.fillRoundedRect(12, 71, 18, 9, 3);
+        g.fillRoundedRect(50, 71, 18, 9, 3);
+
+        // Outline
+        g.lineStyle(2, 0x111111, 1);
+        g.strokeCircle(40, 26, 22);
+        g.strokeRoundedRect(10, 32, 60, 44, 12);
+
+        g.generateTexture('raccoon', 80, 80);
+        g.destroy();
+    }
+
     // ─── Player ────────────────────────────────────────────────────────────────
 
     _buildPlayer() {
         this.player = new Player(this, 200, 520);
         this.physics.add.collider(this.player, this._staticBodies);
+    }
+
+    // ─── Enemies ───────────────────────────────────────────────────────────────
+
+    _buildEnemies() {
+        this._enemies       = this.physics.add.group();
+        this._playerHitboxes = this.add.group();
+        this._enemyHitboxes  = this.add.group();
+
+        // Spawn raccoons at varied positions along the first section
+        [520, 820, 1150].forEach(x => {
+            const r = new Raccoon(this, x, 520);
+            this._enemies.add(r);
+        });
+
+        // Enemy collides with world platforms
+        this.physics.add.collider(this._enemies, this._staticBodies);
+
+        // Player punch hitboxes → enemies
+        this.physics.add.overlap(this._playerHitboxes, this._enemies, (hitbox, enemy) => {
+            if (!(hitbox instanceof Hitbox)) return;
+            if (hitbox._hitTargets.has(enemy)) return;
+            hitbox._hitTargets.add(enemy);
+
+            const dir = this.player.flipX ? 1 : -1;
+            const hit = enemy.takeDamage(this.player.PUNCH_DAMAGE, {
+                knockbackX: dir * this.player.PUNCH_KNOCKBACK_X,
+                knockbackY: this.player.PUNCH_KNOCKBACK_Y,
+            });
+            if (hit) {
+                this.combatFX.impactBlast(enemy.x, enemy.y - 20);
+                this.combatFX.damageNumber(enemy.x, enemy.y - 40, this.player.PUNCH_DAMAGE);
+            }
+        });
+
+        // Enemy attack hitboxes → player
+        this.physics.add.overlap(this._enemyHitboxes, this.player, (hitbox, player) => {
+            if (!(hitbox instanceof Hitbox)) return;
+            if (hitbox._hitTargets.has(player)) return;
+            hitbox._hitTargets.add(player);
+
+            const attacker = hitbox.owner;
+            const dir = attacker ? (attacker.flipX ? 1 : -1) : 1;
+            const dmg = hitbox.opts.damage || 8;
+            player.takeDamage(dmg, {
+                knockbackX: dir * 180,
+                knockbackY: -120,
+            });
+        });
     }
 
     // ─── Camera ────────────────────────────────────────────────────────────────
@@ -353,9 +473,33 @@ class GameScene extends Phaser.Scene {
     // ─── HUD ───────────────────────────────────────────────────────────────────
 
     _buildHUD() {
-        // Debug overlay — press D to toggle (hidden by default for beta testers)
+        // Player HP bar — always visible
+        const barX = 14, barY = 14;
+        const W = 160, H = 16;
+
+        this.add.text(barX, barY, 'HP', {
+            fontFamily: 'monospace', fontSize: '13px',
+            color: '#ffffff', stroke: '#000000', strokeThickness: 3,
+        }).setScrollFactor(0).setDepth(101);
+
+        // Background track
+        this.add.rectangle(barX + 26 + W / 2, barY + 8, W + 4, H + 4, 0x000000, 0.75)
+            .setScrollFactor(0).setDepth(101).setOrigin(0.5);
+
+        // Fill bar — width is updated each frame
+        this._hpBarFill = this.add.rectangle(barX + 26, barY + 8, W, H, 0x44ee44)
+            .setScrollFactor(0).setDepth(102).setOrigin(0, 0.5);
+        this._hpBarMaxW = W;
+
+        // "J = Punch" label (keyboard hint)
+        this.add.text(barX, barY + 24, 'J = Punch', {
+            fontFamily: 'monospace', fontSize: '11px',
+            color: '#cccccc', stroke: '#000000', strokeThickness: 2,
+        }).setScrollFactor(0).setDepth(101);
+
+        // Debug overlay — press D to toggle
         this._debugVisible = false;
-        this._debugText = this.add.text(12, 12, '', {
+        this._debugText = this.add.text(12, 58, '', {
             fontFamily: 'monospace',
             fontSize: '13px',
             color: '#ffffff',
@@ -374,6 +518,14 @@ class GameScene extends Phaser.Scene {
     update(time, delta) {
         this._pollTouchButtons();
         this.player.update(time, delta, this._getInput());
+
+        // Tick enemies
+        this._enemies.getChildren().forEach(e => { if (e.active) e.update(time, delta); });
+
+        // Tick hitboxes (reposition each frame)
+        this._playerHitboxes.getChildren().forEach(h => { if (h.active && h.update) h.update(); });
+        this._enemyHitboxes.getChildren().forEach(h  => { if (h.active && h.update) h.update(); });
+
         this._updateHUD();
     }
 
@@ -383,19 +535,27 @@ class GameScene extends Phaser.Scene {
             right: this.cursors.right.isDown || this._touch.right,
             down:  this.cursors.down.isDown  || this._touch.down,
             jump:  this.cursors.space.isDown || this._touch.jumpDown,
+            punch: Phaser.Input.Keyboard.JustDown(this._punchKey) || this._touch.punchJustDown,
         };
     }
 
     _updateHUD() {
+        // HP bar
+        const frac  = this.player.hp / this.player.maxHp;
+        this._hpBarFill.width     = this._hpBarMaxW * Math.max(0, frac);
+        this._hpBarFill.fillColor = frac > 0.5 ? 0x44ee44 : frac > 0.25 ? 0xeeee44 : 0xee4444;
+
+        if (!this._debugVisible) return;
         const vx = Math.round(this.player.body.velocity.x);
         const vy = Math.round(this.player.body.velocity.y);
         const onGround = this.player.body.blocked.down;
         const state = this.player._crawling ? 'CRAWL' : this.player._crouching ? 'CROUCH' : this.player._sprint ? 'SPRINT' : 'walk';
 
         this._debugText.setText(
-            `Phase 1 — Engine Bootstrap\n` +
+            `Phase 2A — Combat\n` +
             `Vel (${vx}, ${vy})  ${onGround ? 'Grounded' : 'Airborne'}  ${state}\n` +
-            `Pos (${Math.round(this.player.x)}, ${Math.round(this.player.y)})`
+            `Pos (${Math.round(this.player.x)}, ${Math.round(this.player.y)})\n` +
+            `HP ${this.player.hp}/${this.player.maxHp}  Attack: ${this.player.attackState}`
         );
     }
 
@@ -411,6 +571,7 @@ class GameScene extends Phaser.Scene {
             right: { x: 305,  y: 510, r: 52 },
             down:  { x: 195,  y: 578, r: 52 },
             jump:  { x: 1195, y: 510, r: 52 },
+            punch: { x: 1095, y: 580, r: 44 },
         };
 
         // Single graphics layer for all button visuals — redrawn each frame
@@ -423,26 +584,31 @@ class GameScene extends Phaser.Scene {
     // Called every frame — polls raw pointer positions instead of relying on events
     _pollTouchButtons() {
         const prev = { ...this._touch };
-        this._touch.left = false;
-        this._touch.right = false;
+        this._touch.left     = false;
+        this._touch.right    = false;
         this._touch.jumpDown = false;
-        this._touch.down = false;
+        this._touch.down     = false;
+        this._touch.punch    = false;
 
         const ptrs = this.input.manager.pointers;
         for (let i = 0; i < ptrs.length; i++) {
             const p = ptrs[i];
             if (!p || !p.isDown) continue;
-            if (this._inBtn(p.x, p.y, this._btns.left))  this._touch.left = true;
-            if (this._inBtn(p.x, p.y, this._btns.right)) this._touch.right = true;
+            if (this._inBtn(p.x, p.y, this._btns.left))  this._touch.left     = true;
+            if (this._inBtn(p.x, p.y, this._btns.right)) this._touch.right    = true;
             if (this._inBtn(p.x, p.y, this._btns.jump))  this._touch.jumpDown = true;
-            if (this._inBtn(p.x, p.y, this._btns.down))  this._touch.down = true;
+            if (this._inBtn(p.x, p.y, this._btns.down))  this._touch.down     = true;
+            if (this._inBtn(p.x, p.y, this._btns.punch)) this._touch.punch    = true;
         }
 
-        // Only redraw when state changes
-        const changed = this._touch.left !== prev.left
-                     || this._touch.right !== prev.right
+        // punchJustDown: true only on the frame the button transitions to pressed
+        this._touch.punchJustDown = this._touch.punch && !prev.punch;
+
+        const changed = this._touch.left     !== prev.left
+                     || this._touch.right    !== prev.right
                      || this._touch.jumpDown !== prev.jumpDown
-                     || this._touch.down !== prev.down;
+                     || this._touch.down     !== prev.down
+                     || this._touch.punch    !== prev.punch;
         if (changed) this._drawTouchButtons();
     }
 
@@ -498,10 +664,20 @@ class GameScene extends Phaser.Scene {
         drawBtn(this._btns.right, this._touch.right);
         drawBtn(this._btns.down,  this._touch.down);
         drawBtn(this._btns.jump,  this._touch.jumpDown);
+        drawBtn(this._btns.punch, this._touch.punch);
 
         drawArrow(this._btns.left,  'left',  this._touch.left);
         drawArrow(this._btns.right, 'right', this._touch.right);
         drawArrow(this._btns.down,  'down',  this._touch.down);
         drawArrow(this._btns.jump,  'up',    this._touch.jumpDown);
+
+        // Punch button — "J" label in the center
+        const pb  = this._btns.punch;
+        const pa  = this._touch.punch ? 1.0 : 0.7;
+        const col = this._touch.punch ? '#ffffff' : '#dddddd';
+        g.fillStyle(0xffffff, pa);
+        // Draw fist-like shape: two rectangles (knuckles over palm)
+        g.fillRoundedRect(pb.x - 14, pb.y - 16, 28, 14, 5);
+        g.fillRoundedRect(pb.x - 11, pb.y - 4,  22, 12, 4);
     }
 }
