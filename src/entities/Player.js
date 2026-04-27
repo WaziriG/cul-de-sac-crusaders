@@ -303,15 +303,24 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     }
 
     // Applied every frame after all state updates — multiplies base scale by anim layer.
-    // Also compensates physics body dimensions so the absolute collision box never changes
-    // regardless of _animScale (Phaser multiplies setSize values by scaleX/Y internally).
+    // Also compensates physics body so absolute collision size never changes regardless
+    // of _animScale (Phaser multiplies setSize values by its internal scale cache).
     _applyVisualScale() {
         const sx = this._baseScale.x * this._animScale.x;
         const sy = this._baseScale.y * this._animScale.y;
         this.setScale(sx, sy);
 
-        // Divide stored body dims by _animScale to cancel out the scale multiplication,
-        // keeping the absolute collision box identical to the un-animated state.
+        // Phaser's body caches _sx/_sy from the PREVIOUS frame (updated in preUpdate,
+        // which runs before our update()). On transition frames where _animScale changes
+        // abruptly (e.g. land snap to 0.7), the stale cache causes setSize to compute
+        // a wildly wrong body height for one frame — enough to bounce the character off
+        // the floor and start the jump/land loop. Force-sync the cache now so setSize
+        // uses the scale we just set.
+        this.body._sx = sx;
+        this.body._sy = sy;
+
+        // Divide body dims by _animScale to cancel Phaser's scale multiplication,
+        // keeping the absolute collision box constant.
         if (this._crouching) {
             this.body.setSize(320 / this._animScale.x,   580 / this._animScale.y);
             this.body.setOffset(369 / this._animScale.x, 430 / this._animScale.y);
