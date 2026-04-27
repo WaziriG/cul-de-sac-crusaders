@@ -15,7 +15,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this.CROUCH_SPEED     = 80;
         this.CRAWL_SPEED      = 110;
 
-        // Runtime state
+        // Movement runtime state
         this._sprint       = false;
         this._jumpHeld     = false;
         this._jumpHoldTime = 0;
@@ -26,10 +26,17 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this._lastDownTap  = 0;
         this._prevDownDown = false;
 
+        // Animation state — two-layer scale: _baseScale (physics state) × _animScale (tween layer)
+        this._baseScale     = { x: 0.19, y: 0.19 };
+        this._animScale     = { x: 1, y: 1 };
+        this._animRotation  = 0;   // unsigned tilt magnitude; sign applied at render time
+        this._animTweens    = [];
+        this._prevAnimState = null;
+        this._wasOnGround   = true;
+        this._landTimer     = 0;
+
         // Sprite & body setup
-        const SCALE = 0.19;
-        this.setScale(SCALE)
-            .setFlipX(true)
+        this.setFlipX(true)
             .setCollideWorldBounds(true)
             .setDepth(10);
 
@@ -37,6 +44,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this.body.setOffset(369, 28);
         this.body.setDragX(1500);
         this.body.setMaxVelocityX(this.SPRINT_SPEED);
+
+        this._applyVisualScale();
     }
 
     // ─── Public update ─────────────────────────────────────────────────────────
@@ -44,6 +53,31 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     update(time, delta, input) {
         this._move(time, input);
         this._jump(delta, input);
+
+        // Animation state machine
+        const onGround    = this.body.blocked.down;
+        const justLanded  = onGround && !this._wasOnGround;
+        this._wasOnGround = onGround;
+
+        if (this._landTimer > 0) this._landTimer -= delta;
+
+        let newState;
+        if      (!onGround && this.body.velocity.y < 0)  newState = 'jump_rise';
+        else if (!onGround && this.body.velocity.y >= 0) newState = 'jump_fall';
+        else if (justLanded)                             newState = 'land';
+        else if (this._landTimer > 0)                    newState = 'land';
+        else if (this._crawling)                         newState = 'crawl';
+        else if (this._crouching)                        newState = 'crouch_idle';
+        else if (Math.abs(this.body.velocity.x) < 5)    newState = 'idle';
+        else if (this._sprint)                           newState = 'run';
+        else                                             newState = 'walk';
+
+        if (newState !== this._prevAnimState) {
+            this._enterAnimState(newState);
+            this._prevAnimState = newState;
+        }
+
+        this._applyVisualScale();
     }
 
     // ─── Movement ──────────────────────────────────────────────────────────────
@@ -129,16 +163,156 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     }
 
     _applyCrouchPhysics() {
-        const SCALE = 0.19;
         if (this._crouching) {
-            // Shrink hitbox to upper half; offset keeps feet anchored to ground
             this.body.setSize(320, 580);
             this.body.setOffset(369, 430);
-            this.setScale(SCALE, SCALE * 0.6);
+            this._baseScale.x = 0.19;
+            this._baseScale.y = 0.19 * 0.6;
         } else {
             this.body.setSize(320, 982);
             this.body.setOffset(369, 28);
-            this.setScale(SCALE, SCALE);
+            this._baseScale.x = 0.19;
+            this._baseScale.y = 0.19;
         }
+    }
+
+    // ─── Animation ─────────────────────────────────────────────────────────────
+
+    _killAnimTweens() {
+        for (const t of this._animTweens) t.stop();
+        this._animTweens = [];
+    }
+
+    _enterAnimState(state) {
+        this._killAnimTweens();
+        this._animScale.x   = 1;
+        this._animScale.y   = 1;
+        this._animRotation  = 0;
+
+        switch (state) {
+
+            case 'idle':
+                this._animTweens.push(this.scene.tweens.add({
+                    targets:  this._animScale,
+                    y:        1.02,
+                    duration: 1400,
+                    yoyo:     true,
+                    repeat:   -1,
+                    ease:     'Sine.easeInOut',
+                }));
+                break;
+
+            case 'walk':
+                this._animTweens.push(this.scene.tweens.add({
+                    targets:  this._animScale,
+                    y:        0.97,
+                    duration: 280,
+                    yoyo:     true,
+                    repeat:   -1,
+                    ease:     'Sine.easeInOut',
+                }));
+                this._animTweens.push(this.scene.tweens.add({
+                    targets:  this,
+                    _animRotation: 0.04,
+                    duration: 280,
+                    yoyo:     true,
+                    repeat:   -1,
+                    ease:     'Sine.easeInOut',
+                }));
+                break;
+
+            case 'run':
+                this._animTweens.push(this.scene.tweens.add({
+                    targets:  this._animScale,
+                    y:        0.92,
+                    duration: 180,
+                    yoyo:     true,
+                    repeat:   -1,
+                    ease:     'Sine.easeInOut',
+                }));
+                this._animTweens.push(this.scene.tweens.add({
+                    targets:  this,
+                    _animRotation: 0.09,
+                    duration: 180,
+                    yoyo:     true,
+                    repeat:   -1,
+                    ease:     'Sine.easeInOut',
+                }));
+                break;
+
+            case 'jump_rise':
+                this._animTweens.push(this.scene.tweens.add({
+                    targets:  this._animScale,
+                    x:        0.88,
+                    y:        1.18,
+                    duration: 90,
+                    ease:     'Quad.easeOut',
+                }));
+                break;
+
+            case 'jump_fall':
+                this._animTweens.push(this.scene.tweens.add({
+                    targets:  this._animScale,
+                    x:        1.05,
+                    y:        0.96,
+                    duration: 140,
+                    ease:     'Sine.easeInOut',
+                }));
+                break;
+
+            case 'land':
+                this._landTimer   = 120;
+                this._animScale.x = 1.25;
+                this._animScale.y = 0.7;
+                this._animTweens.push(this.scene.tweens.add({
+                    targets:  this._animScale,
+                    x:        1,
+                    y:        1,
+                    duration: 160,
+                    ease:     'Back.easeOut',
+                }));
+                break;
+
+            case 'crouch_idle':
+                this._animTweens.push(this.scene.tweens.add({
+                    targets:  this._animScale,
+                    y:        1.03,
+                    duration: 1600,
+                    yoyo:     true,
+                    repeat:   -1,
+                    ease:     'Sine.easeInOut',
+                }));
+                break;
+
+            case 'crawl':
+                this._animTweens.push(this.scene.tweens.add({
+                    targets:  this._animScale,
+                    x:        1.04,
+                    duration: 600,
+                    yoyo:     true,
+                    repeat:   -1,
+                    ease:     'Sine.easeInOut',
+                }));
+                this._animTweens.push(this.scene.tweens.add({
+                    targets:  this,
+                    _animRotation: 0.025,
+                    duration: 600,
+                    yoyo:     true,
+                    repeat:   -1,
+                    ease:     'Sine.easeInOut',
+                }));
+                break;
+        }
+    }
+
+    // Applied every frame after all state updates — multiplies base scale by anim layer
+    _applyVisualScale() {
+        this.setScale(
+            this._baseScale.x * this._animScale.x,
+            this._baseScale.y * this._animScale.y
+        );
+        // _animRotation is unsigned; sign determined by facing direction
+        const sign = this.flipX ? 1 : -1;
+        this.setRotation(this._animRotation * sign);
     }
 }
