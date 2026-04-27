@@ -302,31 +302,42 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         }
     }
 
-    // Applied every frame after all state updates — multiplies base scale by anim layer.
-    // Also compensates physics body so absolute collision size never changes regardless
-    // of _animScale (Phaser multiplies setSize values by its internal scale cache).
+    // Applied every frame — multiplies base scale by anim layer and keeps the
+    // physics body at a constant absolute size and position in world space.
     _applyVisualScale() {
         const sx = this._baseScale.x * this._animScale.x;
         const sy = this._baseScale.y * this._animScale.y;
         this.setScale(sx, sy);
 
-        // Phaser's body caches _sx/_sy from the PREVIOUS frame (updated in preUpdate,
-        // which runs before our update()). On transition frames where _animScale changes
-        // abruptly (e.g. land snap to 0.7), the stale cache causes setSize to compute
-        // a wildly wrong body height for one frame — enough to bounce the character off
-        // the floor and start the jump/land loop. Force-sync the cache now so setSize
-        // uses the scale we just set.
+        // Force-sync body scale cache — Phaser updates body._sx/_sy in preUpdate
+        // (before our update() runs), so on abrupt animScale transitions the stale
+        // value causes setSize to compute wrong body dimensions for one frame.
         this.body._sx = sx;
         this.body._sy = sy;
 
-        // Divide body dims by _animScale to cancel Phaser's scale multiplication,
-        // keeping the absolute collision box constant.
+        // Keep body.bottom / body.left fixed regardless of animScale.
+        //
+        // body.bottom = player.y + scaleY * (offsetY_tex + sourceH - T/2)   [T=1024]
+        //
+        // With sourceH = baseH / animScale.y, solving for offsetY_tex so body.bottom
+        // stays constant gives:
+        //   offsetY_tex = T/2 - (T/2 - baseOffY) / animScale.y
+        //
+        // The WRONG formula (baseOffY / animScale.y) keeps offset proportional to
+        // scale but shifts body.bottom downward when squashed, driving the body into
+        // the ground and causing the physics engine to bounce the character upward.
+        //
+        // Same derivation applies to offsetX.
+        const ax = this._animScale.x;
+        const ay = this._animScale.y;
+        const offX = 512 - 143 / ax;   // 143 = 512 - 369  (T/2 - base x offset)
+
         if (this._crouching) {
-            this.body.setSize(320 / this._animScale.x,   580 / this._animScale.y);
-            this.body.setOffset(369 / this._animScale.x, 430 / this._animScale.y);
+            this.body.setSize(320 / ax,  580 / ay);
+            this.body.setOffset(offX,    512 - 82  / ay);  //  82 = 512 - 430
         } else {
-            this.body.setSize(320 / this._animScale.x,   982 / this._animScale.y);
-            this.body.setOffset(369 / this._animScale.x,  28 / this._animScale.y);
+            this.body.setSize(320 / ax,  982 / ay);
+            this.body.setOffset(offX,    512 - 484 / ay);  // 484 = 512 - 28
         }
 
         // _animRotation is unsigned magnitude; sign from facing direction
