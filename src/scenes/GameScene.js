@@ -11,27 +11,7 @@ class GameScene extends Phaser.Scene {
         this.WORLD_W = 5120;
         this.WORLD_H = 720;
 
-        // Movement tuning
-        this.WALK_SPEED       = 220;
-        this.SPRINT_SPEED     = 410;
-        this.JUMP_VY          = -530;
-        this.JUMP_HOLD_ACCEL  = -680;
-        this.MAX_JUMP_HOLD_MS = 270;
-        this.DOUBLE_TAP_MS    = 250;
-        this.CROUCH_SPEED     = 80;
-        this.CRAWL_SPEED      = 110;
-
-        // Runtime state
-        this._sprint       = false;
-        this._jumpHeld     = false;
-        this._jumpHoldTime = 0;
-        this._lastTap      = { left: 0, right: 0 };
-        this._prevDown     = { left: false, right: false };
-        this._touch        = { left: false, right: false, jumpDown: false, down: false };
-        this._crouching    = false;
-        this._crawling     = false;
-        this._lastDownTap  = 0;
-        this._prevDownDown = false;
+        this._touch = { left: false, right: false, jumpDown: false, down: false };
 
         this.physics.world.setBounds(0, 0, this.WORLD_W, this.WORLD_H);
 
@@ -358,19 +338,7 @@ class GameScene extends Phaser.Scene {
     // ─── Player ────────────────────────────────────────────────────────────────
 
     _buildPlayer() {
-        const SCALE = 0.19;
-
-        this.player = this.physics.add.sprite(200, 520, 'waz')
-            .setScale(SCALE)
-            .setFlipX(true)
-            .setCollideWorldBounds(true)
-            .setDepth(10);
-
-        this.player.body.setSize(320, 982);
-        this.player.body.setOffset(369, 28);
-        this.player.body.setDragX(1500);
-        this.player.body.setMaxVelocityX(this.SPRINT_SPEED);
-
+        this.player = new Player(this, 200, 520);
         this.physics.add.collider(this.player, this._staticBodies);
     }
 
@@ -405,110 +373,24 @@ class GameScene extends Phaser.Scene {
 
     update(time, delta) {
         this._pollTouchButtons();
-        this._move(time);
-        this._jump(delta);
+        this.player.update(time, delta, this._getInput());
         this._updateHUD();
     }
 
-    _move(time) {
-        const lDown = this.cursors.left.isDown  || this._touch.left;
-        const rDown = this.cursors.right.isDown || this._touch.right;
-        const dDown = this.cursors.down.isDown  || this._touch.down;
-
-        // Double-tap ↓ toggles crawl mode
-        if (dDown && !this._prevDownDown) {
-            if (time - this._lastDownTap < this.DOUBLE_TAP_MS) {
-                this._crawling = !this._crawling;
-            }
-            this._lastDownTap = time;
-        }
-        this._prevDownDown = dDown;
-
-        // Crouching = holding ↓ OR crawl toggled on
-        this._crouching = dDown || this._crawling;
-
-        // Sprint detection via double-tap ← or →
-        if (lDown && !this._prevDown.left) {
-            if (time - this._lastTap.left < this.DOUBLE_TAP_MS) this._sprint = true;
-            this._lastTap.left = time;
-        }
-        if (rDown && !this._prevDown.right) {
-            if (time - this._lastTap.right < this.DOUBLE_TAP_MS) this._sprint = true;
-            this._lastTap.right = time;
-        }
-        if (!lDown && !rDown) this._sprint = false;
-        if (this._crouching)  this._sprint = false;
-
-        // Speed selection
-        let speed;
-        if (this._crouching) {
-            speed = this._crawling ? this.CRAWL_SPEED : this.CROUCH_SPEED;
-        } else {
-            speed = this._sprint ? this.SPRINT_SPEED : this.WALK_SPEED;
-        }
-
-        if (lDown) {
-            this.player.setVelocityX(-speed);
-            this.player.setFlipX(false);
-        } else if (rDown) {
-            this.player.setVelocityX(speed);
-            this.player.setFlipX(true);
-        }
-
-        this._prevDown.left  = lDown;
-        this._prevDown.right = rDown;
-
-        this._applyCrouchPhysics();
-    }
-
-    _jump(delta) {
-        const onGround  = this.player.body.blocked.down;
-        const spaceDown = this.cursors.space.isDown || this._touch.jumpDown;
-
-        if (spaceDown && onGround && !this._jumpHeld && !this._crouching) {
-            this.player.setVelocityY(this.JUMP_VY);
-            this._jumpHeld     = true;
-            this._jumpHoldTime = 0;
-        }
-
-        if (this._jumpHeld) {
-            const stillRising  = this.player.body.velocity.y < 0;
-            const withinWindow = this._jumpHoldTime < this.MAX_JUMP_HOLD_MS;
-
-            if (spaceDown && stillRising && withinWindow) {
-                this.player.setAccelerationY(this.JUMP_HOLD_ACCEL);
-                this._jumpHoldTime += delta;
-            } else {
-                this.player.setAccelerationY(0);
-                this._jumpHeld = false;
-            }
-        }
-
-        if (!spaceDown) {
-            this._jumpHeld = false;
-            this.player.setAccelerationY(0);
-        }
-    }
-
-    _applyCrouchPhysics() {
-        const SCALE = 0.19;
-        if (this._crouching) {
-            // Shrink hitbox to upper half; offset keeps feet anchored to ground
-            this.player.body.setSize(320, 580);
-            this.player.body.setOffset(369, 430);
-            this.player.setScale(SCALE, SCALE * 0.6);
-        } else {
-            this.player.body.setSize(320, 982);
-            this.player.body.setOffset(369, 28);
-            this.player.setScale(SCALE, SCALE);
-        }
+    _getInput() {
+        return {
+            left:  this.cursors.left.isDown  || this._touch.left,
+            right: this.cursors.right.isDown || this._touch.right,
+            down:  this.cursors.down.isDown  || this._touch.down,
+            jump:  this.cursors.space.isDown || this._touch.jumpDown,
+        };
     }
 
     _updateHUD() {
         const vx = Math.round(this.player.body.velocity.x);
         const vy = Math.round(this.player.body.velocity.y);
         const onGround = this.player.body.blocked.down;
-        const state = this._crawling ? 'CRAWL' : this._crouching ? 'CROUCH' : this._sprint ? 'SPRINT' : 'walk';
+        const state = this.player._crawling ? 'CRAWL' : this.player._crouching ? 'CROUCH' : this.player._sprint ? 'SPRINT' : 'walk';
 
         this._debugText.setText(
             `Phase 1 — Engine Bootstrap\n` +
