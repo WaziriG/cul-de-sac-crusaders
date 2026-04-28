@@ -38,12 +38,13 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         // Combat state
         this.hp   = 100;
         this.maxHp = 100;
-        this.PUNCH_WINDUP_MS   = 70;
+        this.PUNCH_WINDUP_MS   = 30;
         this.PUNCH_ACTIVE_MS   = 90;
-        this.PUNCH_RECOVER_MS  = 140;
+        this.PUNCH_RECOVER_MS  = 120;
         this.PUNCH_DAMAGE      = 10;
         this.PUNCH_KNOCKBACK_X = 280;
         this.PUNCH_KNOCKBACK_Y = -160;
+        this.PUNCH_RADIUS      = 120;
         this.attackState    = 'none'; // none | windup | active | recover
         this._attackTimer   = 0;
         this._invulnUntil   = 0;
@@ -210,25 +211,23 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         if (!this.scene._enemies) return;
 
         const dir = this.flipX ? 1 : -1;
-        const cx  = this.x + dir * 55;  // hitbox centre x
-        const cy  = this.y - 10;         // hitbox centre y (slightly above midline)
-        const hw  = 60;                  // half-width of punch reach
-        const hh  = 40;                  // half-height
 
         this.scene._enemies.getChildren().forEach(enemy => {
             if (!enemy.active || enemy._state === 'dead') return;
 
-            const ex = Math.abs(enemy.x - cx);
-            const ey = Math.abs(enemy.y - cy);
-            if (ex < hw + enemy.displayWidth * 0.5 && ey < hh + enemy.displayHeight * 0.5) {
-                const hit = enemy.takeDamage(this.PUNCH_DAMAGE, {
-                    knockbackX: dir * this.PUNCH_KNOCKBACK_X,
-                    knockbackY: this.PUNCH_KNOCKBACK_Y,
-                });
-                if (hit && this.scene.combatFX) {
-                    this.scene.combatFX.impactBlast(enemy.x, enemy.y - 20);
-                    this.scene.combatFX.damageNumber(enemy.x, enemy.y - 40, this.PUNCH_DAMAGE);
-                }
+            // Radius check — enemies pass through the player without a collider, so
+            // directional AABB misses them when they've overshooting. Pure distance
+            // catches them regardless of which side they ended up on.
+            const dist = Phaser.Math.Distance.Between(this.x, this.y, enemy.x, enemy.y);
+            if (dist > this.PUNCH_RADIUS) return;
+
+            const hit = enemy.takeDamage(this.PUNCH_DAMAGE, {
+                knockbackX: dir * this.PUNCH_KNOCKBACK_X,
+                knockbackY: this.PUNCH_KNOCKBACK_Y,
+            });
+            if (hit && this.scene.combatFX) {
+                this.scene.combatFX.impactBlast(enemy.x, enemy.y - 20);
+                this.scene.combatFX.damageNumber(enemy.x, enemy.y - 40, this.PUNCH_DAMAGE);
             }
         });
     }

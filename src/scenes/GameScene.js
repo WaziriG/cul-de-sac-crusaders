@@ -426,8 +426,9 @@ class GameScene extends Phaser.Scene {
             this._enemies.add(r);
         });
 
-        // Enemy collides with world platforms
+        // Enemy collides with world platforms and the player
         this.physics.add.collider(this._enemies, this._staticBodies);
+        this.physics.add.collider(this._enemies, this.player);
 
         // Player punch hitboxes → enemies
         this.physics.add.overlap(this._playerHitboxes, this._enemies, (hitbox, enemy) => {
