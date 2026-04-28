@@ -16,6 +16,7 @@ class GameScene extends Phaser.Scene {
         this.physics.world.setBounds(0, 0, this.WORLD_W, this.WORLD_H);
 
         this._generateRaccoonTexture();
+        this._generateDeerTexture();
         this._buildBackground();
         this._buildPlatforms();
         this._buildPlayer();
@@ -407,6 +408,49 @@ class GameScene extends Phaser.Scene {
         g.destroy();
     }
 
+    _generateDeerTexture() {
+        const g = this.make.graphics({ x: 0, y: 0, add: false });
+
+        // Body — tan/brown rounded rectangle (facing left, head on left)
+        g.fillStyle(0x8b5a2b, 1);
+        g.fillRoundedRect(50, 30, 220, 120, 14);
+
+        // Neck and head on the LEFT side
+        g.fillStyle(0x8b5a2b, 1);
+        g.fillRect(60, 0, 50, 50);
+        g.fillStyle(0x8b5a2b, 1);
+        g.fillRoundedRect(10, -20, 80, 60, 10);
+
+        // Antlers on left side of head (may clip at top edge of texture)
+        g.lineStyle(6, 0x4a2c12, 1);
+        g.beginPath();
+        g.moveTo(30, -20); g.lineTo(25, -50); g.lineTo(10, -45);
+        g.moveTo(30, -20); g.lineTo(40, -55);
+        g.moveTo(70, -20); g.lineTo(75, -50); g.lineTo(90, -45);
+        g.moveTo(70, -20); g.lineTo(62, -55);
+        g.strokePath();
+
+        // Angry red eyes on left side
+        g.fillStyle(0xff2222, 1);
+        g.fillCircle(30, 5, 5);
+        g.fillStyle(0xff2222, 1);
+        g.fillCircle(55, 5, 5);
+
+        // Legs
+        g.fillStyle(0x6b3f1a, 1);
+        g.fillRect(70,  140, 14, 50);
+        g.fillRect(110, 140, 14, 50);
+        g.fillRect(200, 140, 14, 50);
+        g.fillRect(240, 140, 14, 50);
+
+        // Tail on right (rear)
+        g.fillStyle(0xc89868, 1);
+        g.fillCircle(275, 60, 10);
+
+        g.generateTexture('deer', 290, 200);
+        g.destroy();
+    }
+
     // ─── Player ────────────────────────────────────────────────────────────────
 
     _buildPlayer() {
@@ -426,6 +470,10 @@ class GameScene extends Phaser.Scene {
             const r = new Raccoon(this, x, 520);
             this._enemies.add(r);
         });
+
+        // Deer — telegraphed chargers; spawn deeper in the level
+        this._enemies.add(new Deer(this, 1800, 500));
+        this._enemies.add(new Deer(this, 3200, 500));
 
         // Enemy collides with world platforms only; player collision was removed
         // because raccoons would pin the player against the world boundary.
@@ -458,10 +506,11 @@ class GameScene extends Phaser.Scene {
             const attacker = hitbox.owner;
             const dir = attacker ? (attacker.flipX ? 1 : -1) : 1;
             const dmg = hitbox.opts.damage || 8;
-            player.takeDamage(dmg, {
-                knockbackX: dir * 180,
-                knockbackY: -120,
-            });
+            // Use opts knockback if specified (e.g. deer charge), else default
+            const kx = hitbox.opts.knockbackX !== undefined ? hitbox.opts.knockbackX : dir * 180;
+            const ky = hitbox.opts.knockbackY !== undefined ? hitbox.opts.knockbackY : -120;
+            player.takeDamage(dmg, { knockbackX: kx, knockbackY: ky });
+            if (hitbox.opts.onHit) hitbox.opts.onHit(player);
         });
     }
 
