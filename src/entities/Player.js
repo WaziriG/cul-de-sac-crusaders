@@ -44,8 +44,20 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this.PUNCH_DAMAGE      = 10;
         this.PUNCH_KNOCKBACK_X = 280;
         this.PUNCH_KNOCKBACK_Y = -160;
-        this.PUNCH_RADIUS      = 120;
-        this.attackState    = 'none'; // none | windup | active | recover
+        this.PUNCH_RADIUS         = 120;
+        this.KICK_WINDUP_MS       = 160;
+        this.KICK_ACTIVE_MS       = 110;
+        this.KICK_RECOVER_MS      = 280;
+        this.KICK_DAMAGE          = 22;
+        this.KICK_KNOCKBACK_X     = 460;
+        this.KICK_KNOCKBACK_Y     = -260;
+        this.KICK_HIT_PAUSE_MS    = 110;
+        this.KICK_SHAKE_MS        = 200;
+        this.KICK_SHAKE_INTENSITY = 0.014;
+        this.KICK_RADIUS          = 140;
+        // none | punch_windup | punch_active | punch_recover
+        //       | kick_windup  | kick_active  | kick_recover
+        this.attackState    = 'none';
         this._attackTimer   = 0;
         this._invulnUntil   = 0;
         this._activeHitbox  = null;
@@ -82,7 +94,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         else if (!onGround && this.body.velocity.y >= 0) newState = 'jump_fall';
         else if (justLanded)                             newState = 'land';
         else if (this._landTimer > 0)                    newState = 'land';
-        else if (this.attackState !== 'none')            newState = 'punch_' + this.attackState;
+        else if (this.attackState !== 'none')            newState = this.attackState;
         else if (this._crawling)                         newState = 'crawl';
         else if (this._crouching)                        newState = 'crouch_idle';
         else if (Math.abs(this.body.velocity.x) < 5)    newState = 'idle';
@@ -184,26 +196,56 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     _updateAttack(delta, input) {
         if (this.attackState === 'none') {
             if (input.punch && this.body.blocked.down) {
-                this.attackState  = 'windup';
+                this.attackState  = 'punch_windup';
                 this._attackTimer = this.PUNCH_WINDUP_MS;
+            } else if (input.kick && this.body.blocked.down && !this._crouching) {
+                this.attackState  = 'kick_windup';
+                this._attackTimer = this.KICK_WINDUP_MS;
             }
             return;
         }
 
         this._attackTimer -= delta;
 
-        if (this.attackState === 'windup' && this._attackTimer <= 0) {
-            this.attackState  = 'active';
-            this._attackTimer = this.PUNCH_ACTIVE_MS;
-            this._doPunchHit(); // Direct AABB check — reliable across all Phaser group types
-
-        } else if (this.attackState === 'active' && this._attackTimer <= 0) {
-            this.attackState  = 'recover';
-            this._attackTimer = this.PUNCH_RECOVER_MS;
-
-        } else if (this.attackState === 'recover' && this._attackTimer <= 0) {
-            this.attackState  = 'none';
-            this._attackTimer = 0;
+        switch (this.attackState) {
+            case 'punch_windup':
+                if (this._attackTimer <= 0) {
+                    this.attackState  = 'punch_active';
+                    this._attackTimer = this.PUNCH_ACTIVE_MS;
+                    this._doPunchHit();
+                }
+                break;
+            case 'punch_active':
+                if (this._attackTimer <= 0) {
+                    this.attackState  = 'punch_recover';
+                    this._attackTimer = this.PUNCH_RECOVER_MS;
+                }
+                break;
+            case 'punch_recover':
+                if (this._attackTimer <= 0) {
+                    this.attackState  = 'none';
+                    this._attackTimer = 0;
+                }
+                break;
+            case 'kick_windup':
+                if (this._attackTimer <= 0) {
+                    this.attackState  = 'kick_active';
+                    this._attackTimer = this.KICK_ACTIVE_MS;
+                    this._doKickHit();
+                }
+                break;
+            case 'kick_active':
+                if (this._attackTimer <= 0) {
+                    this.attackState  = 'kick_recover';
+                    this._attackTimer = this.KICK_RECOVER_MS;
+                }
+                break;
+            case 'kick_recover':
+                if (this._attackTimer <= 0) {
+                    this.attackState  = 'none';
+                    this._attackTimer = 0;
+                }
+                break;
         }
     }
 
@@ -228,6 +270,28 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             if (hit && this.scene.combatFX) {
                 this.scene.combatFX.impactBlast(enemy.x, enemy.y - 20);
                 this.scene.combatFX.damageNumber(enemy.x, enemy.y - 40, this.PUNCH_DAMAGE);
+            }
+        });
+    }
+
+    _doKickHit() {
+        if (!this.scene._enemies) return;
+        const dir = this.flipX ? 1 : -1;
+
+        this.scene._enemies.getChildren().forEach(enemy => {
+            if (!enemy.active || enemy._state === 'dead') return;
+            const dist = Phaser.Math.Distance.Between(this.x, this.y, enemy.x, enemy.y);
+            if (dist > this.KICK_RADIUS) return;
+
+            const hit = enemy.takeDamage(this.KICK_DAMAGE, {
+                knockbackX: dir * this.KICK_KNOCKBACK_X,
+                knockbackY: this.KICK_KNOCKBACK_Y,
+            });
+            if (hit && this.scene.combatFX) {
+                this.scene.combatFX.hitPause(this.KICK_HIT_PAUSE_MS);
+                this.scene.combatFX.screenShake(this.KICK_SHAKE_MS, this.KICK_SHAKE_INTENSITY);
+                this.scene.combatFX.hitSpark(enemy.x, enemy.y - 20, 0xff9933);
+                this.scene.combatFX.damageNumber(enemy.x, enemy.y - 40, this.KICK_DAMAGE, 0xff9933);
             }
         });
     }
@@ -284,9 +348,9 @@ class Player extends Phaser.Physics.Arcade.Sprite {
 
     _enterAnimState(state) {
         this._killAnimTweens();
-        // Punch sub-states animate from wherever the scale currently sits;
+        // Attack sub-states animate from wherever the scale currently sits;
         // all other states reset to neutral first.
-        if (!state.startsWith('punch_')) {
+        if (!state.startsWith('punch_') && !state.startsWith('kick_')) {
             this._animScale.x  = 1;
             this._animScale.y  = 1;
         }
@@ -429,6 +493,41 @@ class Player extends Phaser.Physics.Arcade.Sprite {
                     x:        1,
                     y:        1,
                     duration: this.PUNCH_RECOVER_MS,
+                    ease:     'Sine.easeOut',
+                }));
+                break;
+
+            case 'kick_windup':
+                // Crouch/coil — taller and slightly narrower, telegraphs the kick
+                this._animTweens.push(this.scene.tweens.add({
+                    targets:  this._animScale,
+                    x:        0.9,
+                    y:        1.08,
+                    duration: 100,
+                    ease:     'Sine.easeIn',
+                }));
+                break;
+
+            case 'kick_active':
+                // Big horizontal lunge — wider and squatter than punch
+                this._animScale.x = 1.25;
+                this._animScale.y = 0.85;
+                this._animTweens.push(this.scene.tweens.add({
+                    targets:  this._animScale,
+                    x:        1,
+                    y:        1,
+                    duration: this.KICK_ACTIVE_MS,
+                    ease:     'Back.easeOut',
+                }));
+                break;
+
+            case 'kick_recover':
+                // Long spring-back — exposes the committal window
+                this._animTweens.push(this.scene.tweens.add({
+                    targets:  this._animScale,
+                    x:        1,
+                    y:        1,
+                    duration: this.KICK_RECOVER_MS,
                     ease:     'Sine.easeOut',
                 }));
                 break;

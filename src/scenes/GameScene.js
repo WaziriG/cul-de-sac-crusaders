@@ -25,8 +25,9 @@ class GameScene extends Phaser.Scene {
         this._buildHUD();
         this._buildTouchControls();
 
-        this.cursors    = this.input.keyboard.createCursorKeys();
-        this._punchKey  = this.input.keyboard.addKey('J');
+        this.cursors   = this.input.keyboard.createCursorKeys();
+        this._punchKey = this.input.keyboard.addKey('J');
+        this._kickKey  = this.input.keyboard.addKey('K');
     }
 
     // ─── Background ────────────────────────────────────────────────────────────
@@ -426,9 +427,10 @@ class GameScene extends Phaser.Scene {
             this._enemies.add(r);
         });
 
-        // Enemy collides with world platforms and the player
+        // Enemy collides with world platforms only; player collision was removed
+        // because raccoons would pin the player against the world boundary.
+        // Punch/kick use radius checks so physical overlap is not needed.
         this.physics.add.collider(this._enemies, this._staticBodies);
-        this.physics.add.collider(this._enemies, this.player);
 
         // Player punch hitboxes → enemies
         this.physics.add.overlap(this._playerHitboxes, this._enemies, (hitbox, enemy) => {
@@ -517,8 +519,8 @@ class GameScene extends Phaser.Scene {
             .setScrollFactor(0).setDepth(102).setOrigin(0, 0.5);
         this._hpBarMaxW = W;
 
-        // "J = Punch" label (keyboard hint)
-        this.add.text(barX, barY + 24, 'J = Punch', {
+        // Keyboard hints
+        this.add.text(barX, barY + 24, 'J = Punch   K = Kick', {
             fontFamily: 'monospace', fontSize: '11px',
             color: '#cccccc', stroke: '#000000', strokeThickness: 2,
         }).setScrollFactor(0).setDepth(101);
@@ -562,6 +564,7 @@ class GameScene extends Phaser.Scene {
             down:  this.cursors.down.isDown  || this._touch.down,
             jump:  this.cursors.space.isDown || this._touch.jumpDown,
             punch: Phaser.Input.Keyboard.JustDown(this._punchKey) || this._touch.punchJustDown,
+            kick:  Phaser.Input.Keyboard.JustDown(this._kickKey)  || false,
         };
     }
 
