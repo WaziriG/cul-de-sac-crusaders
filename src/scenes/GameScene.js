@@ -462,6 +462,31 @@ class GameScene extends Phaser.Scene {
         });
     }
 
+    // ─── Game Over ─────────────────────────────────────────────────────────────
+
+    _showGameOver() {
+        this.physics.world.pause();
+        this.tweens.pauseAll();
+
+        this.add.text(640, 280, 'GAME OVER', {
+            fontFamily:      'monospace',
+            fontSize:        '72px',
+            color:           '#ff2222',
+            stroke:          '#000000',
+            strokeThickness: 6,
+        }).setScrollFactor(0).setDepth(500).setOrigin(0.5);
+
+        this.add.text(640, 380, 'Press R to restart', {
+            fontFamily:      'monospace',
+            fontSize:        '24px',
+            color:           '#ffffff',
+            stroke:          '#000000',
+            strokeThickness: 3,
+        }).setScrollFactor(0).setDepth(500).setOrigin(0.5);
+
+        this.input.keyboard.once('keydown-R', () => this.scene.restart());
+    }
+
     // ─── Camera ────────────────────────────────────────────────────────────────
 
     _buildCamera() {

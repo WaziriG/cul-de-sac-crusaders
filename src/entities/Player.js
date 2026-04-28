@@ -194,25 +194,43 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         if (this.attackState === 'windup' && this._attackTimer <= 0) {
             this.attackState  = 'active';
             this._attackTimer = this.PUNCH_ACTIVE_MS;
-            this._activeHitbox = new Hitbox(this.scene, this, {
-                x:          55,
-                y:          -10,
-                width:      60,
-                height:     40,
-                tag:        'player_punch',
-                lifetimeMs: this.PUNCH_ACTIVE_MS,
-            });
-            this.scene._playerHitboxes.add(this._activeHitbox);
+            this._doPunchHit(); // Direct AABB check — reliable across all Phaser group types
 
         } else if (this.attackState === 'active' && this._attackTimer <= 0) {
-            this.attackState   = 'recover';
-            this._attackTimer  = this.PUNCH_RECOVER_MS;
-            this._activeHitbox = null;
+            this.attackState  = 'recover';
+            this._attackTimer = this.PUNCH_RECOVER_MS;
 
         } else if (this.attackState === 'recover' && this._attackTimer <= 0) {
             this.attackState  = 'none';
             this._attackTimer = 0;
         }
+    }
+
+    _doPunchHit() {
+        if (!this.scene._enemies) return;
+
+        const dir = this.flipX ? 1 : -1;
+        const cx  = this.x + dir * 55;  // hitbox centre x
+        const cy  = this.y - 10;         // hitbox centre y (slightly above midline)
+        const hw  = 60;                  // half-width of punch reach
+        const hh  = 40;                  // half-height
+
+        this.scene._enemies.getChildren().forEach(enemy => {
+            if (!enemy.active || enemy._state === 'dead') return;
+
+            const ex = Math.abs(enemy.x - cx);
+            const ey = Math.abs(enemy.y - cy);
+            if (ex < hw + enemy.displayWidth * 0.5 && ey < hh + enemy.displayHeight * 0.5) {
+                const hit = enemy.takeDamage(this.PUNCH_DAMAGE, {
+                    knockbackX: dir * this.PUNCH_KNOCKBACK_X,
+                    knockbackY: this.PUNCH_KNOCKBACK_Y,
+                });
+                if (hit && this.scene.combatFX) {
+                    this.scene.combatFX.impactBlast(enemy.x, enemy.y - 20);
+                    this.scene.combatFX.damageNumber(enemy.x, enemy.y - 40, this.PUNCH_DAMAGE);
+                }
+            }
+        });
     }
 
     takeDamage(amount, opts = {}) {
@@ -230,7 +248,21 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             if (this.active) this.clearTint();
         });
 
+        if (this.hp <= 0) this._die();
         return true;
+    }
+
+    _die() {
+        this.body.enable = false;
+        this.scene.tweens.add({
+            targets:  this,
+            alpha:    0,
+            scaleX:   0,
+            scaleY:   0,
+            duration: 500,
+            ease:     'Quad.easeIn',
+            onComplete: () => this.scene._showGameOver(),
+        });
     }
 
     _applyCrouchPhysics() {
