@@ -472,6 +472,7 @@ class GameScene extends Phaser.Scene {
         });
 
         // Deer — telegraphed chargers; spawn deeper in the level
+        this._enemies.add(new Deer(this, 400, 500));  // TEST: moved close to start
         this._enemies.add(new Deer(this, 1800, 500));
         this._enemies.add(new Deer(this, 3200, 500));
 
